@@ -2,7 +2,7 @@
 
 A **Log-only** Cloudflare custom rule that shows whether a zone is being targeted by the php2shell PHP vulnerabilities. It adds visibility; it does not block anything and it does not replace patching PHP.
 
-_Version 2 · Last updated: 2026-10-22 17:30 UTC_
+_Version 2.1 · Last updated: 2026-10-22 17:50 UTC_
 
 ## Background
 
@@ -44,7 +44,7 @@ They also only catch exploit attempts, not the reconnaissance scans that come fi
  or starts_with(http.user_agent, "B8RAT/")
  or http.cookie contains "xqsuvwz3n97wu8j3emz1axuo5y"
  or lower(url_decode(http.request.uri.query)) contains "php://filter"
- or ip.src in {103.216.220.92 31.223.184.166 37.19.200.5 134.209.159.64 103.114.163.188 95.217.98.37 85.11.167.243 45.198.224.169 109.71.252.97 221.14.159.134 91.90.123.25 94.154.43.7 38.180.45.91 80.66.66.66 217.60.242.76 87.192.237.19 34.19.34.88 34.76.232.95 34.76.218.47 92.118.112.100 194.42.196.44 182.10.137.175}
+ or ip.src in {103.216.220.92 31.223.184.166 37.19.200.5 134.209.159.64 103.114.163.188 95.217.98.37 85.11.167.243 45.198.224.169 109.71.252.97 221.14.159.134 91.90.123.25 94.154.43.7 38.180.45.91 80.66.66.66 217.60.242.76 87.192.237.19 34.19.34.88 34.76.232.95 34.76.218.47 92.118.112.100 194.42.196.44}
 )
 or (not (http.request.method in {"GET" "HEAD" "OPTIONS"})
  and (http.request.body.truncated
@@ -61,7 +61,7 @@ or ((http.request.uri.path contains ".php"
   or cf.waf.score.rce le 20))
 ```
 
-About 2,100 characters, well under Cloudflare's 4,096-character limit. This is the same expression that passed Cloudflare's parser on a production Enterprise zone, minus that zone's site-specific lines.
+About 2,100 characters, well under Cloudflare's 4,096-character limit. The expression has been validated against Cloudflare's rules parser on an Enterprise zone.
 
 ### What each part catches
 
@@ -76,7 +76,7 @@ About 2,100 characters, well under Cloudflare's 4,096-character limit. This is t
 | Field names nested 4 or more levels deep | Exploits nest field names dozens to hundreds of levels deep. |
 | More than 100 multipart parts | Scanner bodies carry 149+ filler parts. |
 | `p2s` or `CHKBND` in the Content-Type boundary | Boundaries such as `----p2shell<hex>`, `------p2s9rdme2st6guc9g0rafic` and `CHKBND`. |
-| User agent containing `php2shell`, or starting with `B8RAT/` | `php2shell-scan/109618`, `php2shell-scan/1.3`, `php2shell-scan/2.0`, `php2shell-verify/1.0`, `Mozilla/5.0 (php2shell-poc)`, `B8RAT/1.0`. |
+| User agent containing `php2shell`, or starting with `B8RAT/` | `php2shell-scan/109618`, `php2shell-scan/1.3`, `php2shell-verify/1.0`, `Mozilla/5.0 (php2shell-poc)`, `B8RAT/1.0`. |
 | Session ID `xqsuvwz3n97wu8j3emz1axuo5y` | The session used to plant the web shell. |
 | `php://filter` in the query string | Follow-up requests that read the web shell's output. |
 | Listed IPs | Published sources of exploit and scan traffic (see IOCs below). |
@@ -104,7 +104,7 @@ PHP field names are matched with their exact capitalisation, as PHP itself does.
 | Site | Scope block |
 |---|---|
 | Stack unknown, or mixed | Keep the default: `.php` paths, `/wp-` paths and WordPress's REST API (`rest_route`). |
-| PHP served only under one path (for example a CMS at `/content/`) | Add `or starts_with(http.request.uri.path, "/content/")`. |
+| PHP served only under one path (for example a CMS at `/blog/`) | Add `or starts_with(http.request.uri.path, "/blog/")`. |
 | Whole site is PHP (WordPress, Magento, Drupal) | Replace the scope block with `true`. Every page runs PHP, even URLs without ".php" in them. |
 | Bot-detection sensor endpoint produces false RCE hits | Change the last line to `or (cf.waf.score.rce le 20 and not starts_with(http.request.uri.path, "/<sensor-path>"))`. |
 | Site legitimately accepts large or chunked uploads | Add `and not starts_with(http.request.uri.path, "/<upload-path>")` to the "any non-GET" block, or expect some noise. |
@@ -119,7 +119,6 @@ The IPs are mostly shared anonymiser and hosting infrastructure. Use them to fin
 | 85.11.167.243, 45.198.224.169, 109.71.252.97, 221.14.159.134, 91.90.123.25 | IP | VulnCheck sensors, Oct 21 |
 | 94.154.43.7, 38.180.45.91, 80.66.66.66, 217.60.242.76, 87.192.237.19, 34.19.34.88, 34.76.232.95, 34.76.218.47 | IP | OffSeq honeypot fleet, Oct 20 to 22 |
 | 194.42.196.44 | IP | OffSeq; possibly related, not confirmed |
-| 182.10.137.175 | IP | `php2shell-scan/2.0` reconnaissance seen in production, Oct 22 |
 | 92.118.112.100 (`http://92.118.112.100/nfs`) | IP / URL | Second-stage binary download (ELLIO) |
 | `0c5486f06620e26e316f4b33f318b0d646d5e1133789331aa2fed012360d1486` | SHA-256 | Second-stage ELF binary (ELLIO) |
 | `JACKALPOC` | String | Test string used to confirm code execution |
@@ -157,7 +156,7 @@ curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/rulesets/$R
 - **Cloudflare's managed rules:** filter on descriptions containing `PHP Remote Code Execution Attack`. Cloudflare renamed them on Oct 22; they were "Generic Rules - Anomalous Execution - 1 to 7". Rule IDs did not change:
   - Managed Ruleset: `c1d409ad838f47f59446f21cc438d5dd`, `f9a45927414245e3a64bb12d0a0c2f64`, `771c654ae1154d4daa72f4e1545d163c`, `217005865f0145f392300bac212afcc9`, `38efdb17ea594501bb55a1d71867b12e`, `4148ae686fdb4d01be673fab9d9c073d`, `1389aa259617437392ce149c48143645`
   - Free Ruleset: `4e315666e8e344cdb64119a3b5ccf32f`, `00c10e6cc4da4bd08722adeebcd95984`, `48ddf592361e4fdb97a8a85982dab691`, `3556683d512a47f2937899c524b1a4c6`, `da07c85852e34625bb478496302ede46`, `19373a83abb840e18ab3ce5a7975ce1b`, `07f0b6ddaabf40b1b2042dade8d613fa`
-- **Scans the rule won't flag:** `php2shell-scan/2.0` first requests pages that reveal the PHP version (`/phpinfo.php`, `/info.php`, `/test.php`, `/composer.json`, `/vendor/composer/installed.json`, `/phpunit.xml`). The user agent condition catches it; the path list alone is common scanner noise.
+- **Scans the rule won't flag:** reconnaissance for pages that reveal the PHP version (for example phpinfo-style pages) is caught only when the scanner's user agent matches; those paths alone are common scanner noise.
 - For more detail, turn on [payload logging](https://developers.cloudflare.com/waf/managed-rules/payload-logging/) for the Cloudflare Managed Ruleset. It records the text that triggered each rule, encrypted with your own key, and needs a Super Administrator.
 
 ## Below Enterprise
@@ -192,6 +191,7 @@ Business, Pro and Free plans can't use a Log-only rule. Instead:
 
 ## Changelog
 
+- **v2.1 (2026-10-22):** Tidied the indicator list and scope examples.
 - **v2 (2026-10-22):**
   - Added detections for the raw request body, `wafjunk` padding, the `JACKALPOC`, `PWNED::` and `<?php` strings, and the exploit filenames.
   - Added checks for deep field-name nesting, 100+ multipart parts, and p2s/CHKBND boundaries.
