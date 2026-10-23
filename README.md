@@ -2,7 +2,7 @@
 
 A **Log-only** Cloudflare custom rule that shows whether a zone is being targeted by the php2shell PHP vulnerabilities. It adds visibility; it does not block anything and it does not replace patching PHP.
 
-_Version 2.1 · Last updated: 2026-10-22 17:50 UTC_
+_Version 3 · Last updated: 2026-10-23 14:30 UTC_
 
 ## Background
 
@@ -15,6 +15,7 @@ _Version 2.1 · Last updated: 2026-10-22 17:50 UTC_
   - First seen Oct 17, 2026, four days before disclosure.
   - Cloudflare reported attempts rising from tens of thousands in the first 45 minutes after disclosure to millions.
   - Several scanner and exploit tool families are active, and payloads are being changed to evade WAF signatures.
+  - By Oct 23: exploitation used to drop a Mirai variant ("Potassium"), open directories of exploit tooling found online, and a commercial exploit that defeats ASLR on PHP 8.4.26 with mod_php. Cloudflare updated the first of its managed rules again on Oct 23.
 
 ## Why a watch rule when Cloudflare already blocks it?
 
@@ -28,8 +29,8 @@ They also only catch exploit attempts, not the reconnaissance scans that come fi
 ## Expression (Enterprise)
 
 ```
-(any(http.request.body.multipart.names[*][0] in {"PHP_SESSION_UPLOAD_PROGRESS" "wafjunk"})
- or any(http.request.body.form.names[*] in {"PHP_SESSION_UPLOAD_PROGRESS" "wafjunk"})
+(any(http.request.body.multipart.names[*][0] in {"PHP_SESSION_UPLOAD_PROGRESS" "wafjunk" "PHPSESSID"})
+ or any(http.request.body.form.names[*] in {"PHP_SESSION_UPLOAD_PROGRESS" "wafjunk" "PHPSESSID"})
  or http.request.body.raw contains "PHP_SESSION_UPLOAD_PROGRESS"
  or http.request.body.raw contains "JACKALPOC"
  or http.request.body.raw contains "PWNED::"
@@ -42,9 +43,10 @@ They also only catch exploit attempts, not the reconnaissance scans that come fi
  or lower(http.request.headers["content-type"][0]) contains "chkbnd"
  or lower(http.user_agent) contains "php2shell"
  or starts_with(http.user_agent, "B8RAT/")
+ or (starts_with(http.user_agent, "fasthttp") and not (http.request.method in {"GET" "HEAD" "OPTIONS"}))
  or http.cookie contains "xqsuvwz3n97wu8j3emz1axuo5y"
  or lower(url_decode(http.request.uri.query)) contains "php://filter"
- or ip.src in {103.216.220.92 31.223.184.166 37.19.200.5 134.209.159.64 103.114.163.188 95.217.98.37 85.11.167.243 45.198.224.169 109.71.252.97 221.14.159.134 91.90.123.25 94.154.43.7 38.180.45.91 80.66.66.66 217.60.242.76 87.192.237.19 34.19.34.88 34.76.232.95 34.76.218.47 92.118.112.100 194.42.196.44}
+ or ip.src in {103.216.220.92 31.223.184.166 37.19.200.5 134.209.159.64 103.114.163.188 95.217.98.37 85.11.167.243 45.198.224.169 109.71.252.97 221.14.159.134 91.90.123.25 94.154.43.7 38.180.45.91 80.66.66.66 217.60.242.76 87.192.237.19 34.19.34.88 34.76.232.95 34.76.218.47 92.118.112.100 194.42.196.44 87.121.84.174 181.215.186.252 185.196.220.132 185.161.210.29 152.233.51.69 45.134.225.16 107.189.14.87 193.47.62.24 2409:40d2:204e:4be:2a1f:f9c9:a055:e00b 103.147.220.17 206.188.197.105 102.210.149.166 122.10.110.72 122.10.17.49 58.221.60.160 41.223.30.7 157.230.117.70 104.219.251.31 107.150.31.151 217.160.132.82 47.100.125.108 54.169.109.7 139.162.165.136 134.199.154.64}
 )
 or (not (http.request.method in {"GET" "HEAD" "OPTIONS"})
  and (http.request.body.truncated
@@ -61,7 +63,7 @@ or ((http.request.uri.path contains ".php"
   or cf.waf.score.rce le 20))
 ```
 
-About 2,100 characters, well under Cloudflare's 4,096-character limit. The expression has been validated against Cloudflare's rules parser on an Enterprise zone.
+About 2,600 characters, well under Cloudflare's 4,096-character limit. The expression has been validated against Cloudflare's rules parser on an Enterprise zone.
 
 ### What each part catches
 
@@ -71,12 +73,14 @@ About 2,100 characters, well under Cloudflare's 4,096-character limit. The expre
 |---|---|
 | `PHP_SESSION_UPLOAD_PROGRESS` as a form or multipart field, or anywhere in the raw body | The CVE-2026-109619 trigger. The raw-body check also catches malformed uploads Cloudflare can't parse into fields. |
 | `wafjunk` field | Padding used by a WAF-bypass group (bodies of about 1 MB of repeated "A"). |
+| `PHPSESSID` sent as a form or multipart field | The exploit can pass the session ID as an ordinary POST field instead of a cookie. |
 | `JACKALPOC`, `PWNED::`, `<?php` in the body | A test string used to confirm code execution, the planted web shell (`<?php echo 'PWNED::'; system($_GET['c']); ?>`), and PHP code injected through the session. |
 | Filenames `p2s.txt`, `uga67qBl6ky1.txt` | Upload filenames seen in exploit requests. |
 | Field names nested 4 or more levels deep | Exploits nest field names dozens to hundreds of levels deep. |
 | More than 100 multipart parts | Scanner bodies carry 149+ filler parts. |
 | `p2s` or `CHKBND` in the Content-Type boundary | Boundaries such as `----p2shell<hex>`, `------p2s9rdme2st6guc9g0rafic` and `CHKBND`. |
 | User agent containing `php2shell`, or starting with `B8RAT/` | `php2shell-scan/109618`, `php2shell-scan/1.3`, `php2shell-verify/1.0`, `Mozilla/5.0 (php2shell-poc)`, `B8RAT/1.0`. |
+| `fasthttp` user agent on a POST, PUT or PATCH | The oversized-body WAF-bypass group sends from a Go fasthttp client. Legitimate Go clients also use it, so expect some noise. |
 | Session ID `xqsuvwz3n97wu8j3emz1axuo5y` | The session used to plant the web shell. |
 | `php://filter` in the query string | Follow-up requests that read the web shell's output. |
 | Listed IPs | Published sources of exploit and scan traffic (see IOCs below). |
@@ -119,6 +123,10 @@ The IPs are mostly shared anonymiser and hosting infrastructure. Use them to fin
 | 85.11.167.243, 45.198.224.169, 109.71.252.97, 221.14.159.134, 91.90.123.25 | IP | VulnCheck sensors, Oct 21 |
 | 94.154.43.7, 38.180.45.91, 80.66.66.66, 217.60.242.76, 87.192.237.19, 34.19.34.88, 34.76.232.95, 34.76.218.47 | IP | OffSeq honeypot fleet, Oct 20 to 22 |
 | 194.42.196.44 | IP | OffSeq; possibly related, not confirmed |
+| 87.121.84.174, 181.215.186.252, 185.196.220.132, 185.161.210.29, 152.233.51.69, 45.134.225.16, 107.189.14.87, 193.47.62.24, 2409:40d2:204e:4be:2a1f:f9c9:a055:e00b, 103.147.220.17 | IP | Exploitation attempts reported by Wordfence, Oct 22 to 23 |
+| 206.188.197.105 (port 9999) | IP | Exploit server (SOCRadar) |
+| 102.210.149.166, 122.10.110.72, 122.10.17.49, 58.221.60.160, 41.223.30.7, 157.230.117.70, 104.219.251.31, 107.150.31.151, 217.160.132.82, 47.100.125.108, 54.169.109.7, 139.162.165.136 | IP | Open directories hosting php2shell tooling (Hunt.io) |
+| 134.199.154.64, `thunder.godofthunder.st`, TCP 50792 | IP / domain | Mirai "Potassium" payload host and C2 |
 | 92.118.112.100 (`http://92.118.112.100/nfs`) | IP / URL | Second-stage binary download (ELLIO) |
 | `0c5486f06620e26e316f4b33f318b0d646d5e1133789331aa2fed012360d1486` | SHA-256 | Second-stage ELF binary (ELLIO) |
 | `JACKALPOC` | String | Test string used to confirm code execution |
@@ -191,6 +199,7 @@ Business, Pro and Free plans can't use a Log-only rule. Instead:
 
 ## Changelog
 
+- **v3 (2026-10-23):** Added `PHPSESSID` as a POST field, `fasthttp` POSTs, and 24 IPs from Wordfence, SOCRadar and Hunt.io reporting, plus Mirai "Potassium" infrastructure in the IOC table.
 - **v2.1 (2026-10-22):** Tidied the indicator list and scope examples.
 - **v2 (2026-10-22):**
   - Added detections for the raw request body, `wafjunk` padding, the `JACKALPOC`, `PWNED::` and `<?php` strings, and the exploit filenames.
@@ -211,4 +220,7 @@ Business, Pro and Free plans can't use a Log-only rule. Instead:
 - [Tenable: php2shell FAQ](https://www.tenable.com/blog/php2shell-cve-2026-109618-cve-2026-109619-frequently-asked-questions-about-critical-php-remote)
 - [Cybernews: PHP2Shell attempts hit millions](https://cybernews.com/security/php2shell-wordpress-amazon-cloudflare-ai-cyberattacks/)
 - [Cloudflare WAF emergency release, 2026-10-21](https://developers.cloudflare.com/changelog/post/2026-10-21-emergency-waf-release-cfmr/)
+- [The Hacker News: PHP2Shell attempts hit millions, Mirai deployment](https://thehackernews.com/2026/10/php2shell-exploit-attempts-hit-millions.html)
+- [JFrog: PHP2Shell, all you need to know](https://research.jfrog.com/post/php2shell-all-you-need-to-know-about-cve-2026-109618-and-cve-2026-109619/)
+- [The Register: exploit bypasses ASLR](https://www.theregister.com/security/2026/10/22/php2shell-exploit-bypasses-protections-designed-to-stop-remote-code-execution/5304883)
 - [Cloudflare docs: request body fields](https://developers.cloudflare.com/ruleset-engine/rules-language/fields/reference/http.request.body.multipart.names/)
